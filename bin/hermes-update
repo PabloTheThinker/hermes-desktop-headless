@@ -22,6 +22,18 @@ if [[ -z "$APPLY" ]]; then
 fi
 
 echo "==> hermes update (preserving local Desktop patches after)"
+
+# Don't re-apply when user only wants help/check
+case "${1:-}" in
+  -h|--help|help)
+    hermes update --help
+    exit 0
+    ;;
+  --check)
+    exec hermes update --check
+    ;;
+esac
+
 set +e
 hermes update "$@"
 upd=$?
