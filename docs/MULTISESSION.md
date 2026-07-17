@@ -63,7 +63,34 @@ hermes-desktop-headless split right
 # right-click session → Open in split → Right
 ```
 
-## See also
+## After `hermes update` (history reset)
 
-- [README.md](../README.md)
-- Upstream: `apps/desktop/src/app/chat/session-drag.ts`, `session-actions-menu.tsx`
+`hermes update` can **reset** a diverged git tree to `origin/main` and report
+**Desktop app up to date** (skip rebuild). That drops local UI patches and leaves
+an old Electron binary.
+
+Restore on the machine you use for Desktop:
+
+```bash
+cd ~/.hermes/hermes-agent   # or your install path from `hermes --version`
+# if you still have the patches cloned:
+git apply /path/to/hermes-desktop-headless/patches/0001-preserve-desktop-session-token.patch
+git apply /path/to/hermes-desktop-headless/patches/0002-session-drag-body-split.patch
+git apply /path/to/hermes-desktop-headless/patches/0003-session-open-in-split-menu.patch
+
+# force Desktop binary rebuild (do not trust "up to date" after a reset)
+hermes desktop --force-build
+# fully quit Desktop, then:
+hermes desktop --skip-build
+```
+
+Verify sources before rebuild:
+
+```bash
+rg -n "overComposer|Default body drop" apps/desktop/src/app/chat/session-drag.ts
+rg -n "SplitSubmenu" apps/desktop/src/app/chat/sidebar/session-actions-menu.tsx
+rg -n "desktop_preserve" hermes_cli/env_loader.py
+```
+
+If all three match, rebuild. If `git apply` fails (upstream already changed),
+re-port the diffs by hand from those patch files.
