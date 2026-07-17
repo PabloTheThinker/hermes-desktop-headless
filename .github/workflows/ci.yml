@@ -1,0 +1,28 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    name: shell quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            shellcheck xvfb x11vnc novnc websockify fluxbox scrot dbus-x11
+
+      - name: make check (bash -n + shellcheck)
+        run: make check
+
+      - name: make smoke (hermes optional)
+        run: make smoke
+        env:
+          HD_SMOKE_REQUIRE_HERMES: "0"

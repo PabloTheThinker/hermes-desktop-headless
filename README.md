@@ -4,8 +4,9 @@
 
 Virtual framebuffer + lightweight WM + VNC + browser client. Defaults to **localhost-only** access via SSH tunnel.
 
-[![version](https://img.shields.io/badge/version-0.2.0-blue)](VERSION)
+[![version](https://img.shields.io/badge/version-0.2.1-blue)](VERSION)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![ci](https://github.com/PabloTheThinker/hermes-desktop-headless/actions/workflows/ci.yml/badge.svg)](https://github.com/PabloTheThinker/hermes-desktop-headless/actions/workflows/ci.yml)
 
 ![hero](docs/screenshots/public-hero.png)
 
@@ -132,10 +133,13 @@ systemctl --user enable --now hermes-desktop-headless.service
 ## Development
 
 ```bash
-bash -n bin/hermes-desktop-headless lib/common.sh scripts/*.sh
-./scripts/smoke-test.sh
-shellcheck -x bin/hermes-desktop-headless lib/common.sh   # if installed
+make check    # bash -n + shellcheck
+make smoke    # offline unit tests (Hermes optional)
+make doctor
+./scripts/install.sh [--packages]
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Troubleshooting
 
