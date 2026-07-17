@@ -20,6 +20,11 @@
 : "${HD_WAIT_HERMES_SEC:=45}"
 : "${HD_SKIP_VNC:=0}"
 : "${HD_LOG_LEVEL:=info}" # debug|info|warn
+# Pointer fidelity for noVNC drag (session tiling). Override with HD_X11VNC_EXTRA.
+: "${HD_X11VNC_EXTRA:=}"
+: "${HD_POINTER_MODE:=1}"
+: "${HD_VNC_DEFER_MS:=1}"
+: "${HD_VNC_WAIT_MS:=5}"
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -163,19 +168,19 @@ hd_package_hints() {
   local id; id="$(hd_os_id)"
   case "$id" in
     ubuntu|debian|linuxmint|pop|raspbian)
-      echo "sudo apt-get install -y xvfb x11vnc novnc websockify fluxbox scrot dbus-x11"
+      echo "sudo apt-get install -y xvfb x11vnc novnc websockify fluxbox scrot dbus-x11 xdotool"
       ;;
     fedora|rhel|centos|rocky|almalinux)
-      echo "sudo dnf install -y xorg-x11-server-Xvfb x11vnc novnc python3-websockify fluxbox scrot dbus-x11"
+      echo "sudo dnf install -y xorg-x11-server-Xvfb x11vnc novnc python3-websockify fluxbox scrot dbus-x11 xdotool"
       ;;
     arch|manjaro|endeavouros)
-      echo "sudo pacman -S --needed xorg-server-xvfb x11vnc novnc python-websockify fluxbox scrot dbus"
+      echo "sudo pacman -S --needed xorg-server-xvfb x11vnc novnc python-websockify fluxbox scrot dbus xdotool"
       ;;
     opensuse*|sles)
-      echo "sudo zypper install -y xorg-x11-server-Xvfb x11vnc novnc python3-websockify fluxbox scrot dbus-1-x11"
+      echo "sudo zypper install -y xorg-x11-server-Xvfb x11vnc novnc python3-websockify fluxbox scrot dbus-1-x11 xdotool"
       ;;
     *)
-      echo "# Install: Xvfb, x11vnc, noVNC, websockify, a WM (fluxbox/openbox), scrot, dbus-x11"
+      echo "# Install: Xvfb, x11vnc, noVNC, websockify, a WM (fluxbox/openbox), scrot, dbus-x11, xdotool (for split CLI)"
       ;;
   esac
   echo "# Hermes CLI must be on PATH: https://hermes-agent.nousresearch.com/"
@@ -443,16 +448,42 @@ hd_start_vnc() {
     auth_args=(-nopw)
   fi
 
+  # Pointer path tuned for noVNC drag (session tiles / Open-in-split gestures):
+  # -always_inject  : deliver clicks even when dx=dy=0 (menu clicks, slow drags)
+  # -pointer_mode 1 : smoother motion sampling (less "stuck" drags)
+  # -cursor most    : real X cursors so targets are visible over VNC
+  # -defer 1 -wait 5: low latency updates so drop targets track the pointer
+  # -wait_ui 0.5    : poll faster while UI input is active
+  # shellcheck disable=SC2086
   hd_spawn x11vnc x11vnc \
     -display ":$HD_DISPLAY" \
     -rfbport "$HD_VNC_PORT" \
     -listen "$HD_BIND" \
     -forever -shared -noxdamage -repeat \
-    "${auth_args[@]}"
+    -always_inject \
+    -pointer_mode "$HD_POINTER_MODE" \
+    -cursor most \
+    -defer "$HD_VNC_DEFER_MS" \
+    -wait "$HD_VNC_WAIT_MS" \
+    -wait_ui 0.5 \
+    "${auth_args[@]}" \
+    $HD_X11VNC_EXTRA
 
   hd_wait_until 5 "x11vnc" hd_is_alive x11vnc \
     || { tail -n 30 "$(hd_logfile x11vnc)" >&2; hd_die "x11vnc failed"; }
-  hd_log info "x11vnc ${HD_BIND}:${HD_VNC_PORT} (pid $(hd_read_pid x11vnc))"
+  hd_log info "x11vnc ${HD_BIND}:${HD_VNC_PORT} (pid $(hd_read_pid x11vnc)) [pointer-fidelity]"
+}
+
+hd_novnc_query() {
+  # Optimal noVNC client params for drag/drop tiling:
+  # resize=remote  — 1:1 coords (scale mode breaks drop geometry)
+  # quality=9 compression=0 — fewer smear/ghost frames during drag
+  # show_dot=1 — local cursor for hit-testing
+  printf 'autoconnect=1&resize=remote&quality=9&compression=0&show_dot=1'
+}
+
+hd_novnc_url() {
+  printf 'http://%s:%s/vnc.html?%s\n' "$HD_BIND" "$HD_NOVNC_PORT" "$(hd_novnc_query)"
 }
 
 hd_start_novnc() {
@@ -472,19 +503,120 @@ hd_start_novnc() {
 
   hd_wait_until 5 "noVNC" hd_is_alive novnc \
     || { tail -n 30 "$(hd_logfile novnc)" >&2; hd_die "noVNC/websockify failed"; }
-  hd_log info "noVNC http://${HD_BIND}:${HD_NOVNC_PORT}/vnc.html (pid $(hd_read_pid novnc))"
+  hd_log info "noVNC $(hd_novnc_url) (pid $(hd_read_pid novnc))"
 }
 
 hd_print_urls() {
+  local url
+  url="$(hd_novnc_url)"
   cat <<EOF
 Display   : :${HD_DISPLAY}
 VNC       : ${HD_BIND}:${HD_VNC_PORT}
-noVNC     : http://${HD_BIND}:${HD_NOVNC_PORT}/vnc.html?autoconnect=1&resize=remote
+noVNC     : ${url}
 SSH tunnel:
   ssh -N -L ${HD_NOVNC_PORT}:127.0.0.1:${HD_NOVNC_PORT} -L ${HD_VNC_PORT}:127.0.0.1:${HD_VNC_PORT} user@host
-Then open:
-  http://127.0.0.1:${HD_NOVNC_PORT}/vnc.html?autoconnect=1&resize=remote
+Then open (drag-friendly params already in the URL):
+  http://127.0.0.1:${HD_NOVNC_PORT}/vnc.html?$(hd_novnc_query)
+
+Multi-session tiling (video-style):
+  1. Right-click "New session" → Open in split → Right
+  2. Or: Ctrl+T for a new tab; Ctrl+click a session to open as tab
+  3. Drag a session to the chat edge to split (needs resize=remote URL above)
+  CLI without drag:  hermes-desktop-headless split right
 EOF
+}
+
+# Restart only the VNC layer (apply pointer-fidelity flags without bouncing Desktop).
+hd_restart_vnc() {
+  hd_mkdirs
+  hd_kill_pidfile novnc
+  hd_kill_pidfile x11vnc
+  sleep 0.3
+  hd_start_vnc
+  hd_start_novnc
+  hd_print_urls
+}
+
+# ---------------------------------------------------------------------------
+# Split / tile helpers (no drag required — for noVNC and automation)
+# ---------------------------------------------------------------------------
+hd_hermes_window() {
+  export DISPLAY=":${HD_DISPLAY}"
+  hd_have xdotool || return 1
+  local w
+  w="$(xdotool search --onlyvisible --name 'Hermes' 2>/dev/null | head -1 || true)"
+  if [[ -z "$w" ]]; then
+    w="$(xdotool search --class Hermes 2>/dev/null | head -1 || true)"
+  fi
+  [[ -n "$w" ]] && printf '%s\n' "$w"
+}
+
+# Drive "New session → Open in split → <dir>" via xdotool.
+# dir: right|left|up|down (default right). Requires xdotool.
+hd_split() {
+  local dir="${1:-right}"
+  export DISPLAY=":${HD_DISPLAY}"
+  hd_have xdotool || hd_die "xdotool required for 'split' (sudo apt-get install -y xdotool)"
+  hd_electron_on_display || pgrep -f 'linux-unpacked/Hermes' >/dev/null \
+    || hd_die "Hermes Desktop is not running — start first"
+
+  local wid
+  wid="$(hd_hermes_window)" || hd_die "could not find Hermes window on :${HD_DISPLAY}"
+  xdotool windowactivate --sync "$wid"
+  sleep 0.25
+  xdotool key --window "$wid" Escape Escape
+  sleep 0.2
+
+  # Geometry relative clicks: "New session" is top-left of the content chrome.
+  local x y w h
+  eval "$(xdotool getwindowgeometry --shell "$wid")"
+  x=$X; y=$Y; w=$WIDTH; h=$HEIGHT
+
+  # New session row (~ left rail, first item under titlebar)
+  local nx ny
+  nx=$((x + 90))
+  ny=$((y + 70))
+  xdotool mousemove --sync "$nx" "$ny"
+  sleep 0.15
+  xdotool click 3
+  sleep 0.55
+
+  # "Open in split" sits just below New session in the context menu
+  xdotool mousemove --sync $((nx + 40)) $((ny + 20))
+  sleep 0.35
+
+  # Submenu directions: Right first (default), then Down, Left, Up
+  local sx sy
+  case "$dir" in
+    right|r)  sx=$((nx + 130)); sy=$((ny + 28)) ;;
+    down|d|bottom) sx=$((nx + 130)); sy=$((ny + 48)) ;;
+    left|l)   sx=$((nx + 130)); sy=$((ny + 68)) ;;
+    up|u|top) sx=$((nx + 130)); sy=$((ny + 88)) ;;
+    *) hd_die "split dir must be right|left|up|down (got: $dir)" ;;
+  esac
+
+  # Open submenu by hovering Open in split, then click direction
+  xdotool mousemove --sync $((nx + 50)) $((ny + 22))
+  sleep 0.45
+  xdotool mousemove --sync "$sx" "$sy"
+  sleep 0.25
+  xdotool click 1
+  sleep 0.8
+
+  hd_log info "split requested: $dir (window $wid)"
+  echo "split $dir — if the layout did not change, use right-click New session → Open in split in the UI"
+}
+
+# Ctrl+T new session tab (stacked, not split).
+hd_new_tab() {
+  export DISPLAY=":${HD_DISPLAY}"
+  hd_have xdotool || hd_die "xdotool required"
+  local wid
+  wid="$(hd_hermes_window)" || hd_die "Hermes window not found"
+  xdotool windowactivate --sync "$wid"
+  sleep 0.2
+  xdotool key --window "$wid" ctrl+t
+  hd_log info "sent Ctrl+T (new session tab)"
 }
 
 # ---------------------------------------------------------------------------

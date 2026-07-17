@@ -27,8 +27,11 @@ Commands:
   start [--foreground] [--no-vnc] [--bind ADDR] [--display N]
   stop
   restart [start-options...]
+  restart-vnc              # re-apply pointer-fidelity VNC flags only
   status
   screenshot [path.png]
+  split [right|left|up|down]   # Open in split (no drag; needs xdotool)
+  new-tab                      # Ctrl+T new session tab (needs xdotool)
   url
   doctor [--install-hints]
   version
@@ -46,10 +49,19 @@ Environment (optional):
   HD_NOVNC_WEB=path             Override noVNC web root
   HD_WM=fluxbox|openbox|icewm   Preferred window manager
   HD_WAIT_HERMES_SEC=45         Electron ready timeout
+  HD_POINTER_MODE=1             x11vnc -pointer_mode (drag fidelity)
+  HD_VNC_DEFER_MS=1             x11vnc -defer (lower = snappier drag)
+  HD_VNC_WAIT_MS=5              x11vnc -wait poll interval
+  HD_X11VNC_EXTRA='...'         Extra raw x11vnc flags
 
 Security: binds 127.0.0.1 by default. Reach via SSH tunnel or mesh VPN.
   ssh -N -L 6080:127.0.0.1:6080 user@host
-  open http://127.0.0.1:6080/vnc.html?autoconnect=1&resize=remote
+  open the printed noVNC URL (includes drag-friendly query params)
+
+Multi-session (video-style tiling):
+  UI:  right-click New session → Open in split → Right
+  CLI: hermes-desktop-headless split right
+  Tab: hermes-desktop-headless new-tab   # or Ctrl+T in the window
 EOF
 }
 
@@ -60,8 +72,11 @@ case "$cmd" in
   start)      hd_start "$@" ;;
   stop)       hd_stop ;;
   restart)    hd_stop || true; hd_start "$@" ;;
+  restart-vnc|vnc-restart) hd_restart_vnc ;;
   status)     hd_status ;;
   shot|screenshot) hd_screenshot "$@" ;;
+  split|tile) hd_split "$@" ;;
+  new-tab|newtab|tab) hd_new_tab ;;
   url)        hd_print_urls ;;
   doctor)     hd_doctor "$@" ;;
   version|--version|-V) echo "hermes-desktop-headless ${VERSION}" ;;

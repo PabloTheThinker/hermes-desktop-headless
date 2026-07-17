@@ -4,7 +4,7 @@
 
 Virtual framebuffer + lightweight WM + VNC + browser client. Defaults to **localhost-only** access via SSH tunnel.
 
-[![version](https://img.shields.io/badge/version-0.2.1-blue)](VERSION)
+[![version](https://img.shields.io/badge/version-0.3.0-blue)](VERSION)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![ci](https://github.com/PabloTheThinker/hermes-desktop-headless/actions/workflows/ci.yml/badge.svg)](https://github.com/PabloTheThinker/hermes-desktop-headless/actions/workflows/ci.yml)
 
@@ -12,15 +12,19 @@ Virtual framebuffer + lightweight WM + VNC + browser client. Defaults to **local
 
 ## Features
 
-- **One CLI**: `start` / `stop` / `status` / `screenshot` / `doctor`
+- **One CLI**: `start` / `stop` / `status` / `screenshot` / `doctor` / `split` / `new-tab`
 - **Portable deps**: Debian/Ubuntu, Fedora/RHEL, Arch, openSUSE package hints
 - **WM auto-pick**: fluxbox → openbox → icewm → matchbox
 - **noVNC discovery**: `/usr/share/novnc`, Arch webapps path, overrides
 - **websockify**: binary or `python3 -m websockify`
+- **Pointer-fidelity VNC**: low-latency x11vnc + drag-friendly noVNC URL (session tiling)
+- **No-drag split CLI**: `split right` via xdotool when browser drag fails
 - **Safe process kill**: only Electron on *our* `DISPLAY`, not every Hermes on the host
 - **Stale SingletonLock cleanup** for Electron single-instance
 - **Security default**: `HD_BIND=127.0.0.1`; non-loopback requires VNC password file
 - **Documents** the Desktop session-token `.env` clobber bug + patch
+
+See **[docs/MULTISESSION.md](docs/MULTISESSION.md)** for video-style multi-chat tiling over noVNC.
 
 ## Screenshots
 
@@ -69,8 +73,11 @@ Industry-standard headless GUI pattern (Xvfb + x11vnc + noVNC), specialized for 
 |---------|---------|
 | `start [--foreground] [--no-vnc] [--bind ADDR] [--display N]` | Bring stack up |
 | `stop` / `restart` | Tear down / bounce |
-| `status` / `url` | Health + access URLs |
+| `restart-vnc` | Re-apply pointer-fidelity VNC flags only |
+| `status` / `url` | Health + drag-friendly access URLs |
 | `screenshot [path.png]` | Capture virtual display |
+| `split [right\|left\|up\|down]` | **Open in split** without drag (needs `xdotool`) |
+| `new-tab` | Ctrl+T new session tab (needs `xdotool`) |
 | `doctor [--install-hints]` | Dependency check + distro install line |
 | `version` | Print package version |
 
@@ -115,11 +122,21 @@ Upstream issue class: [NousResearch/hermes-agent#39349](https://github.com/NousR
 
 ## Multisession / layout (X-demo class)
 
-With Desktop up in noVNC:
+With Desktop up in noVNC (use the URL from `hermes-desktop-headless url`):
 
-1. **Ctrl/⌘+K** → `New session tab`  
-2. **Ctrl/⌘+K** → `Toggle layout edit mode`  
-3. Drag tabs into panes  
+1. **Right-click New session → Open in split → Right** — side-by-side chats  
+2. **Ctrl+T** or `hermes-desktop-headless new-tab` — new session tab  
+3. **Ctrl+click** a session — open as tab  
+4. Drag session to chat **edge** — split (requires `resize=remote` URL)  
+5. **No drag?** `hermes-desktop-headless split right`
+
+Full guide: **[docs/MULTISESSION.md](docs/MULTISESSION.md)**.
+
+```bash
+# apply pointer-fidelity flags if you started before v0.3
+hermes-desktop-headless restart-vnc
+hermes-desktop-headless split right
+```
 
 ## systemd (user)
 
