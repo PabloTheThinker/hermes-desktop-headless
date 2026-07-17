@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# hermes-desktop-headless — run Hermes Desktop on a machine with no physical GPU/display.
+# Stack: Xvfb + dbus + fluxbox + hermes desktop + x11vnc + noVNC (websockify).
+set -euo pipefail
+
+# Resolve through symlinks so ~/.local/bin/hermes-desktop-headless still finds lib/
+_SELF="${BASH_SOURCE[0]}"
+while [[ -L "$_SELF" ]]; do
+  _dir="$(cd -P "$(dirname "$_SELF")" && pwd)"
+  _SELF="$(readlink "$_SELF")"
+  [[ "$_SELF" != /* ]] && _SELF="$_dir/$_SELF"
+done
+ROOT="$(cd "$(dirname "$_SELF")/.." && pwd)"
+# shellcheck source=../lib/common.sh
+source "$ROOT/lib/common.sh"
+
+cmd="${1:-start}"
+shift || true
+
+case "$cmd" in
+  start)   hd_start "$@" ;;
+  stop)    hd_stop "$@" ;;
+  status)  hd_status "$@" ;;
+  restart) hd_stop || true; hd_start "$@" ;;
+  shot|screenshot) hd_screenshot "$@" ;;
+  url)     hd_print_urls ;;
+  doctor)  hd_doctor ;;
+  -h|--help|help)
+    cat <<'EOF'
+hermes-desktop-headless — Hermes Desktop on headless Linux
+
+Usage:
+  hermes-desktop-headless start [--foreground] [--no-vnc] [--bind ADDR]
+  hermes-desktop-headless stop
+  hermes-desktop-headless status
+  hermes-desktop-headless restart
+  hermes-desktop-headless screenshot [path.png]
+  hermes-desktop-headless url
+  hermes-desktop-headless doctor
+
+Env (optional):
+  HD_DISPLAY=99              X display number (default 99)
+  HD_GEOMETRY=1920x1080x24   Xvfb screen geometry
+  HD_VNC_PORT=5901           RFB port (default 5901)
+  HD_NOVNC_PORT=6080         browser UI port (default 6080)
+  HD_BIND=127.0.0.1          bind address for VNC/noVNC (default localhost only)
+  HD_STATE_DIR=~/.local/state/hermes-desktop-headless
+  HD_HERMES_CMD=hermes desktop --skip-build
+  HD_NO_SANDBOX=1            pass Electron --no-sandbox when needed
+  HD_VNC_PASSWORD_FILE=...   if set, x11vnc uses -rfbauth (recommended off-localhost)
+
+Security default: VNC and noVNC bind to 127.0.0.1 only.
+Access via SSH tunnel or Tailscale Serve — do not open HD_BIND=0.0.0.0 on the public internet.
+EOF
+    ;;
+  *)
+    echo "unknown command: $cmd" >&2
+    echo "try: hermes-desktop-headless help" >&2
+    exit 1
+    ;;
+esac

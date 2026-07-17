@@ -1,0 +1,14 @@
+# Private / host-local screenshots — do not publish
+docs/screenshots/01-*.png
+docs/screenshots/02-*.png
+docs/screenshots/03-*.png
+docs/screenshots/04-*.png
+docs/screenshots/desktop-ready.png
+docs/screenshots/desktop-workspace.png
+
+# Runtime
+.local-state/
+*.pass
+*.rfbauth
+.env
+.DS_Store
