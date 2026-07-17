@@ -4,27 +4,36 @@
 
 Virtual framebuffer + lightweight WM + VNC + browser client. Defaults to **localhost-only** access via SSH tunnel.
 
-[![version](https://img.shields.io/badge/version-0.3.1-blue)](VERSION)
+[![version](https://img.shields.io/badge/version-0.3.2-blue)](VERSION)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![ci](https://github.com/PabloTheThinker/hermes-desktop-headless/actions/workflows/ci.yml/badge.svg)](https://github.com/PabloTheThinker/hermes-desktop-headless/actions/workflows/ci.yml)
 
 ![hero](docs/screenshots/public-hero.png)
 
+## Who is this for?
+
+| You are… | Useful? | Use this |
+|----------|---------|----------|
+| Running Hermes on a **VPS / server with no monitor** | **Yes** | This repo end-to-end (`start` → noVNC) |
+| On a **laptop with a screen** and native Hermes Desktop | **Partially** | Only the **patches** (`scripts/apply-desktop-patches.sh`) if drag/split is wrong or Desktop 401s after update — **not** the Xvfb stack |
+| Only using Telegram / CLI / dashboard | **No** | You don’t need this |
+| Want video-style multi-chat tiling | **Yes (patches)** | Upstream still drops on chat body as `@session` link; our Desktop patches fix that |
+
+**Honest take:** The headless stack is a real product for agent servers. The Desktop patches are the piece most **interactive** users feel daily — until Nous merges equivalent UX, re-apply after `hermes update` resets.
+
 ## Features
 
-- **One CLI**: `start` / `stop` / `status` / `screenshot` / `doctor` / `split` / `new-tab`
+- **One CLI**: `start` / `stop` / `status` / `screenshot` / `doctor` / `split` / `new-tab` / `restart-vnc`
 - **Portable deps**: Debian/Ubuntu, Fedora/RHEL, Arch, openSUSE package hints
 - **WM auto-pick**: fluxbox → openbox → icewm → matchbox
 - **noVNC discovery**: `/usr/share/novnc`, Arch webapps path, overrides
 - **websockify**: binary or `python3 -m websockify`
 - **Pointer-fidelity VNC**: low-latency x11vnc + drag-friendly noVNC URL (session tiling)
 - **No-drag split CLI**: `split right` via xdotool when browser drag fails
-- **Safe process kill**: only Electron on *our* `DISPLAY`, not every Hermes on the host
-- **Stale SingletonLock cleanup** for Electron single-instance
-- **Security default**: `HD_BIND=127.0.0.1`; non-loopback requires VNC password file
-- **Documents** the Desktop session-token `.env` clobber bug + patch
-
-See **[docs/MULTISESSION.md](docs/MULTISESSION.md)** for video-style multi-chat tiling over noVNC.
+- **Post-update restore**: `scripts/apply-desktop-patches.sh` + force Desktop rebuild
+- **Everyday check**: `scripts/verify-everyday.sh` (stack + backend token)
+- **Safe process kill**: only Electron on *our* `DISPLAY`
+- **Security default**: loopback bind; password required off-localhost
 
 ## Screenshots
 
@@ -47,7 +56,27 @@ hermes-desktop-headless doctor --install-hints
 hermes-desktop-headless start
 ```
 
-From your laptop:
+## Laptop users (no headless stack)
+
+If Desktop already runs on a real display and you only need **tiling that matches the demos**:
+
+```bash
+git clone https://github.com/PabloTheThinker/hermes-desktop-headless.git
+cd hermes-desktop-headless
+./scripts/apply-desktop-patches.sh --force-build
+# fully quit Hermes Desktop, reopen
+```
+
+Details: [docs/MULTISESSION.md](docs/MULTISESSION.md).
+
+## Everyday health
+
+```bash
+./scripts/verify-everyday.sh
+# or after start:
+hermes-desktop-headless status
+hermes-desktop-headless url
+```
 
 ```bash
 ssh -N -L 6080:127.0.0.1:6080 user@server
