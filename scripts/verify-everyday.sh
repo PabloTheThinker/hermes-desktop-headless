@@ -17,22 +17,22 @@ fi
 ok "cli $($CLI version 2>/dev/null | tr -d '\n' || echo unknown)"
 
 status="$($CLI status 2>/dev/null || true)"
-printf '%s\n' "$status" | grep -qE '^UP[[:space:]]+xvfb' && ok xvfb || bad xvfb
-printf '%s\n' "$status" | grep -qE 'electron' && ok electron_line || bad electron_line
-pgrep -f 'linux-unpacked/Hermes' >/dev/null 2>&1 && ok electron_proc || bad electron_proc
-[[ -S /tmp/.X11-unix/X${HD_DISPLAY:-99} ]] && ok "x11_socket" || bad "x11_socket"
+if printf '%s\n' "$status" | grep -qE '^UP[[:space:]]+xvfb'; then ok xvfb; else bad xvfb; fi
+if printf '%s\n' "$status" | grep -qE 'electron'; then ok electron_line; else bad electron_line; fi
+if pgrep -f 'linux-unpacked/Hermes' >/dev/null 2>&1; then ok electron_proc; else bad electron_proc; fi
+if [[ -S /tmp/.X11-unix/X${HD_DISPLAY:-99} ]]; then ok x11_socket; else bad x11_socket; fi
 
 code="$(curl -sS -m 2 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${HD_NOVNC_PORT:-6080}/vnc.html" 2>/dev/null || echo 000)"
-[[ "$code" == 200 ]] && ok "novnc_http=$code" || bad "novnc_http=$code"
+if [[ "$code" == 200 ]]; then ok "novnc_http=$code"; else bad "novnc_http=$code"; fi
 
 if pgrep -af 'x11vnc' 2>/dev/null | grep -q always_inject; then
-  ok 'x11vnc_pointer_fidelity'
+  ok x11vnc_pointer_fidelity
 else
   bad 'x11vnc_pointer_fidelity (run: hermes-desktop-headless restart-vnc)'
 fi
 
 # Desktop-spawned backend (optional but expected when Desktop is healthy)
-python3 - <<'PY' || true
+if python3 - <<'PY'
 import os, re, subprocess, urllib.request, sys
 ss = subprocess.check_output(["ss", "-lntp"], text=True)
 ports = []
@@ -76,8 +76,11 @@ if not found:
     print("BAD desktop_backend (no HERMES_DESKTOP serve with working token)")
     sys.exit(2)
 PY
-be=$?
-[[ $be -eq 0 ]] || fail=$((fail + 1))
+then
+  :
+else
+  fail=$((fail + 1))
+fi
 
 echo "----"
 echo "FAILS=$fail"
