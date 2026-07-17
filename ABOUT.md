@@ -1,38 +1,42 @@
 # About
 
-**hermes-desktop-headless** is a small ops utility for people who run [Hermes Agent](https://hermes-agent.nousresearch.com/) on **servers without a monitor**.
+**hermes-desktop-headless** runs the real Hermes Desktop (Electron) on Linux servers that have no monitor, seat, or `$DISPLAY`.
 
 ## Problem
 
-Hermes Desktop is Electron. Headless Linux has no `$DISPLAY`. The official `hermes desktop` command cannot show a window, so you lose:
+`hermes desktop` requires a graphical session. Headless VPS/cloud hosts exit with:
 
-- Multisession tabs  
-- Flexible pane layout  
-- Desktop plugins and chrome  
+```text
+Missing X server or $DISPLAY
+```
 
-…even when `hermes serve` / gateway are healthy for CLI and Telegram.
+That blocks multisession tabs, flexible layout, and Desktop plugins — even when CLI/Telegram agents work.
 
-## Solution
+## Approach
 
-A single CLI starts a known-good stack:
+A well-known self-hosted pattern:
 
-1. **Xvfb** — virtual 1920×1080 display  
-2. **dbus + fluxbox** — session bus + window manager (Electron behaves better)  
-3. **Hermes Desktop** — real packaged app (`hermes desktop --skip-build`)  
-4. **x11vnc + noVNC** — view/control from a browser via SSH tunnel  
+1. **Xvfb** — virtual X server  
+2. **Lightweight WM** — fluxbox/openbox/icewm (Electron expects a WM)  
+3. **dbus session** — quieter desktop integrations  
+4. **Hermes Desktop** — official `hermes desktop` binary  
+5. **x11vnc + websockify/noVNC** — browser remote desktop over SSH tunnel  
 
-Defaults are **localhost-only**. Reach the UI with SSH port-forward or a mesh VPN; do not expose raw VNC to the public internet without a password file.
+Same family of stack used for headless Chrome/CI desktops and “desktop in a tab” self-hosting.
 
-## Origin
+## Design goals
 
-Built for a production Hermes install on a headless host where Desktop failed with `Missing X server or $DISPLAY`, then failed again with a boot-time **401** because `~/.hermes/.env` overwrote Desktop’s minted session token. Both issues are handled or documented here.
+- Works on **common Linux distros** with package hints  
+- **Secure by default** (loopback bind)  
+- **One binary entrypoint**, small bash, no heavy runtime  
+- Does **not** fork Hermes; only orchestrates the environment  
 
 ## Non-goals
 
-- Not a fork of Hermes  
-- Not a multi-tenant SaaS control plane  
-- Not a replacement for `hermes dashboard` (browser SPA) when that fits your workflow  
+- Multi-tenant SaaS browser isolation  
+- Replacing `hermes dashboard` (SPA) when that is enough  
+- Shipping a full desktop DE (XFCE/GNOME) — too heavy for agent boxes  
 
 ## Maintainers
 
-Vektra / Pablo Navarro — issues and PRs on the GitHub repo.
+Pablo Navarro / Vektra — GitHub issues and PRs welcome.

@@ -1,5 +1,6 @@
 [Unit]
-Description=Hermes Desktop (headless via Xvfb + noVNC)
+Description=Hermes Desktop headless (Xvfb + noVNC)
+Documentation=https://github.com/PabloTheThinker/hermes-desktop-headless
 After=network-online.target
 Wants=network-online.target
 
@@ -10,7 +11,6 @@ Environment=HD_DISPLAY=99
 Environment=HD_BIND=127.0.0.1
 Environment=HD_VNC_PORT=5901
 Environment=HD_NOVNC_PORT=6080
-# Install the CLI on PATH or set absolute ExecStart
 ExecStart=%h/.local/bin/hermes-desktop-headless start
 ExecStop=%h/.local/bin/hermes-desktop-headless stop
 TimeoutStartSec=120

@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# Shared helpers for hermes-desktop-headless. Sourced only — not executed.
-# shellcheck disable=SC2034
+# Shared library for hermes-desktop-headless (sourced, not executed).
+# Portable across Debian/Ubuntu, Fedora/RHEL, Arch (path + package discovery).
+# shellcheck shell=bash disable=SC2034
 
+# ---------------------------------------------------------------------------
+# Defaults
+# ---------------------------------------------------------------------------
 : "${HD_DISPLAY:=99}"
 : "${HD_GEOMETRY:=1920x1080x24}"
 : "${HD_VNC_PORT:=5901}"
@@ -9,80 +13,277 @@
 : "${HD_BIND:=127.0.0.1}"
 : "${HD_STATE_DIR:=${XDG_STATE_HOME:-$HOME/.local/state}/hermes-desktop-headless}"
 : "${HD_HERMES_CMD:=hermes desktop --skip-build}"
-: "${HD_NO_SANDBOX:=1}"
 : "${HD_VNC_PASSWORD_FILE:=}"
 : "${HD_USER_DATA:=${HERMES_DESKTOP_USER_DATA_DIR:-$HOME/.config/Hermes}}"
-: "${HD_NOVNC_WEB:=/usr/share/novnc}"
+: "${HD_NOVNC_WEB:=}"
+: "${HD_WM:=}"
 : "${HD_WAIT_HERMES_SEC:=45}"
+: "${HD_SKIP_VNC:=0}"
+: "${HD_LOG_LEVEL:=info}" # debug|info|warn
 
-hd_need() {
-  command -v "$1" >/dev/null 2>&1 || {
-    echo "missing dependency: $1" >&2
-    return 1
-  }
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+hd_log() {
+  local level="$1"; shift
+  case "$level" in
+    debug) [[ "${HD_LOG_LEVEL}" == debug ]] || return 0 ;;
+    info|warn|error) ;;
+    *) level=info ;;
+  esac
+  printf '[%s] %s\n' "$level" "$*" >&2
 }
 
-hd_doctor() {
-  local missing=0
-  for b in Xvfb x11vnc websockify fluxbox scrot; do
-    if command -v "$b" >/dev/null 2>&1; then
-      echo "ok  $b → $(command -v "$b")"
-    else
-      echo "MISS $b"
-      missing=1
-    fi
-  done
-  if [[ -d "$HD_NOVNC_WEB" ]]; then
-    echo "ok  noVNC web → $HD_NOVNC_WEB"
-  else
-    echo "MISS noVNC web root ($HD_NOVNC_WEB)"
-    missing=1
-  fi
-  if command -v hermes >/dev/null 2>&1; then
-    echo "ok  hermes → $(command -v hermes)"
-    hermes --version 2>/dev/null | head -3 || true
-  else
-    echo "MISS hermes CLI on PATH"
-    missing=1
-  fi
-  echo "display candidate :$HD_DISPLAY  bind=$HD_BIND  vnc=$HD_VNC_PORT  novnc=$HD_NOVNC_PORT"
-  echo "state dir $HD_STATE_DIR"
-  return "$missing"
-}
+hd_die() { hd_log error "$*"; return 1; }
 
-hd_mkdirs() {
-  mkdir -p "$HD_STATE_DIR"/{logs,run}
-}
+# ---------------------------------------------------------------------------
+# Paths / process helpers
+# ---------------------------------------------------------------------------
+hd_mkdirs() { mkdir -p "$HD_STATE_DIR"/{logs,run}; }
 
-hd_pidfile() { echo "$HD_STATE_DIR/run/$1.pid"; }
-hd_logfile() { echo "$HD_STATE_DIR/logs/$1.log"; }
+hd_pidfile() { printf '%s/run/%s.pid\n' "$HD_STATE_DIR" "$1"; }
+hd_logfile() { printf '%s/logs/%s.log\n' "$HD_STATE_DIR" "$1"; }
 
 hd_is_alive() {
   local pf pid
   pf="$(hd_pidfile "$1")"
   [[ -f "$pf" ]] || return 1
-  pid="$(cat "$pf" 2>/dev/null || true)"
+  pid="$(<"$pf")"
   [[ -n "${pid:-}" ]] && kill -0 "$pid" 2>/dev/null
+}
+
+hd_read_pid() {
+  local pf; pf="$(hd_pidfile "$1")"
+  [[ -f "$pf" ]] && cat "$pf" || true
+}
+
+hd_spawn() {
+  # hd_spawn <name> <command...>  — run in background, record pid + log
+  local name="$1"; shift
+  local log; log="$(hd_logfile "$name")"
+  hd_log debug "spawn $name: $*"
+  nohup "$@" >"$log" 2>&1 &
+  echo $! >"$(hd_pidfile "$name")"
 }
 
 hd_kill_pidfile() {
   local name="$1" pf pid
   pf="$(hd_pidfile "$name")"
-  if [[ -f "$pf" ]]; then
-    pid="$(cat "$pf" 2>/dev/null || true)"
-    if [[ -n "${pid:-}" ]] && kill -0 "$pid" 2>/dev/null; then
-      kill "$pid" 2>/dev/null || true
-      # give it a moment, then force
-      for _ in 1 2 3 4 5; do
-        kill -0 "$pid" 2>/dev/null || break
-        sleep 0.2
-      done
-      kill -9 "$pid" 2>/dev/null || true
-    fi
-    rm -f "$pf"
+  [[ -f "$pf" ]] || return 0
+  pid="$(<"$pf")"
+  if [[ -n "${pid:-}" ]] && kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    local i
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 0.15
+    done
+    kill -9 "$pid" 2>/dev/null || true
   fi
+  rm -f "$pf"
 }
 
+hd_wait_until() {
+  # hd_wait_until <seconds> <message> <command...>
+  local secs="$1" msg="$2"; shift 2
+  local i
+  for ((i = 1; i <= secs * 5; i++)); do
+    if "$@"; then return 0; fi
+    sleep 0.2
+  done
+  hd_log error "timeout waiting for: $msg"
+  return 1
+}
+
+hd_have() { command -v "$1" >/dev/null 2>&1; }
+
+# ---------------------------------------------------------------------------
+# Distro / dependency resolution
+# ---------------------------------------------------------------------------
+hd_os_id() {
+  # shellcheck disable=SC1091
+  [[ -r /etc/os-release ]] && . /etc/os-release
+  printf '%s\n' "${ID:-unknown}"
+}
+
+hd_resolve_novnc_web() {
+  if [[ -n "${HD_NOVNC_WEB}" && -d "${HD_NOVNC_WEB}" ]]; then
+    printf '%s\n' "$HD_NOVNC_WEB"
+    return 0
+  fi
+  local p
+  for p in \
+    /usr/share/novnc \
+    /usr/share/webapps/novnc \
+    /usr/local/share/novnc \
+    "$HOME/.local/share/novnc"
+  do
+    if [[ -d "$p" && ( -f "$p/vnc.html" || -f "$p/vnc_lite.html" ) ]]; then
+      printf '%s\n' "$p"
+      return 0
+    fi
+  done
+  return 1
+}
+
+hd_resolve_websockify() {
+  if hd_have websockify; then
+    printf '%s\n' websockify
+    return 0
+  fi
+  if hd_have python3 && python3 -c 'import websockify' 2>/dev/null; then
+    printf '%s\n' 'python3 -m websockify'
+    return 0
+  fi
+  return 1
+}
+
+hd_resolve_wm() {
+  local preferred="${HD_WM:-}" c
+  if [[ -n "$preferred" ]]; then
+    hd_have "$preferred" && { printf '%s\n' "$preferred"; return 0; }
+  fi
+  for c in fluxbox openbox icewm matchbox-window-manager; do
+    if hd_have "$c"; then
+      printf '%s\n' "$c"
+      return 0
+    fi
+  done
+  return 1
+}
+
+hd_resolve_screenshot() {
+  if hd_have scrot; then printf '%s\n' scrot; return 0; fi
+  if hd_have import; then printf '%s\n' import; return 0; fi # ImageMagick
+  if hd_have gnome-screenshot; then printf '%s\n' gnome-screenshot; return 0; fi
+  return 1
+}
+
+hd_package_hints() {
+  local id; id="$(hd_os_id)"
+  case "$id" in
+    ubuntu|debian|linuxmint|pop|raspbian)
+      echo "sudo apt-get install -y xvfb x11vnc novnc websockify fluxbox scrot dbus-x11"
+      ;;
+    fedora|rhel|centos|rocky|almalinux)
+      echo "sudo dnf install -y xorg-x11-server-Xvfb x11vnc novnc python3-websockify fluxbox scrot dbus-x11"
+      ;;
+    arch|manjaro|endeavouros)
+      echo "sudo pacman -S --needed xorg-server-xvfb x11vnc novnc python-websockify fluxbox scrot dbus"
+      ;;
+    opensuse*|sles)
+      echo "sudo zypper install -y xorg-x11-server-Xvfb x11vnc novnc python3-websockify fluxbox scrot dbus-1-x11"
+      ;;
+    *)
+      echo "# Install: Xvfb, x11vnc, noVNC, websockify, a WM (fluxbox/openbox), scrot, dbus-x11"
+      ;;
+  esac
+  echo "# Hermes CLI must be on PATH: https://hermes-agent.nousresearch.com/"
+}
+
+hd_doctor() {
+  local hints=0 missing=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --install-hints) hints=1; shift ;;
+      *) shift ;;
+    esac
+  done
+
+  local b
+  for b in Xvfb x11vnc; do
+    if hd_have "$b"; then
+      echo "ok   $b -> $(command -v "$b")"
+    else
+      echo "MISS $b"
+      missing=1
+    fi
+  done
+
+  if hd_resolve_websockify >/dev/null; then
+    echo "ok   websockify -> $(hd_resolve_websockify)"
+  else
+    echo "MISS websockify (or python3 -m websockify)"
+    missing=1
+  fi
+
+  if hd_resolve_wm >/dev/null; then
+    echo "ok   window manager -> $(hd_resolve_wm)"
+  else
+    echo "MISS window manager (fluxbox|openbox|icewm)"
+    missing=1
+  fi
+
+  if novnc_web="$(hd_resolve_novnc_web 2>/dev/null)"; then
+    echo "ok   noVNC web -> $novnc_web"
+  else
+    echo "MISS noVNC web root (expected /usr/share/novnc or set HD_NOVNC_WEB)"
+    missing=1
+  fi
+
+  if hd_resolve_screenshot >/dev/null; then
+    echo "ok   screenshot -> $(hd_resolve_screenshot)"
+  else
+    echo "WARN screenshot tool missing (scrot|import) - optional"
+  fi
+
+  if hd_have hermes; then
+    echo "ok   hermes -> $(command -v hermes)"
+    hermes --version 2>/dev/null | head -3 || true
+  else
+    echo "MISS hermes CLI on PATH"
+    missing=1
+  fi
+
+  if hd_have dbus-launch; then
+    echo "ok   dbus-launch -> $(command -v dbus-launch)"
+  else
+    echo "WARN dbus-launch missing (recommended)"
+  fi
+
+  echo "plan display=:${HD_DISPLAY} bind=${HD_BIND} vnc=${HD_VNC_PORT} novnc=${HD_NOVNC_PORT}"
+  echo "plan state=${HD_STATE_DIR} os=$(hd_os_id)"
+
+  if [[ "$hints" -eq 1 ]] || [[ "$missing" -ne 0 ]]; then
+    echo "--- install hints ---"
+    hd_package_hints
+  fi
+  return "$missing"
+}
+
+# ---------------------------------------------------------------------------
+# Runtime env
+# ---------------------------------------------------------------------------
+hd_export_display() {
+  export DISPLAY=":${HD_DISPLAY}"
+  export XAUTHORITY="${XAUTHORITY:-$HD_STATE_DIR/run/xauth}"
+  export HERMES_DESKTOP_DISABLE_GPU="${HERMES_DESKTOP_DISABLE_GPU:-1}"
+  export ELECTRON_OZONE_PLATFORM_HINT="${ELECTRON_OZONE_PLATFORM_HINT:-x11}"
+  # Persist for screenshot/status in other shells
+  {
+    printf 'export DISPLAY=%q\n' "$DISPLAY"
+    printf 'export XAUTHORITY=%q\n' "$XAUTHORITY"
+    if [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
+      printf 'export DBUS_SESSION_BUS_ADDRESS=%q\n' "$DBUS_SESSION_BUS_ADDRESS"
+    fi
+  } >"$HD_STATE_DIR/run/env.sh"
+}
+
+hd_load_runtime_env() {
+  # shellcheck disable=SC1091
+  [[ -f "$HD_STATE_DIR/run/env.sh" ]] && . "$HD_STATE_DIR/run/env.sh"
+}
+
+hd_is_loopback_bind() {
+  case "$HD_BIND" in
+    127.0.0.1|localhost|::1) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# Electron singleton
+# ---------------------------------------------------------------------------
 hd_clear_singleton() {
   local lock="$HD_USER_DATA/SingletonLock" target pid
   mkdir -p "$HD_USER_DATA"
@@ -90,91 +291,114 @@ hd_clear_singleton() {
     target="$(readlink "$lock" 2>/dev/null || true)"
     pid="${target##*-}"
     if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
-      echo "Hermes Desktop already running (pid $pid) — leaving SingletonLock alone"
+      hd_log info "Hermes Desktop already running (pid $pid); leaving SingletonLock"
       return 0
     fi
-    echo "clearing stale Electron singleton (was: ${target:-unknown})"
+    hd_log info "clearing stale Electron singleton (${target:-unknown})"
     rm -f "$HD_USER_DATA/SingletonLock" \
           "$HD_USER_DATA/SingletonCookie" \
           "$HD_USER_DATA/SingletonSocket"
   fi
 }
 
-hd_export_display() {
-  export DISPLAY=":${HD_DISPLAY}"
-  export XAUTHORITY="${XAUTHORITY:-$HD_STATE_DIR/run/xauth}"
-  # GPU-less virtual framebuffer: avoid GPU process crashes
-  export HERMES_DESKTOP_DISABLE_GPU="${HERMES_DESKTOP_DISABLE_GPU:-1}"
-  export ELECTRON_OZONE_PLATFORM_HINT="${ELECTRON_OZONE_PLATFORM_HINT:-x11}"
+# Kill only Hermes Electron processes bound to our DISPLAY (not every Hermes on the host).
+hd_proc_display() {
+  # best-effort; other users' /proc/*/environ may be unreadable
+  local pid="$1" envf="/proc/$pid/environ"
+  [[ -r "$envf" ]] || return 0
+  tr '\0' '\n' <"$envf" 2>/dev/null | sed -n 's/^DISPLAY=//p' | head -1 || true
 }
 
+hd_kill_electron_on_display() {
+  local pid disp
+  for pid in $(pgrep -f 'linux-unpacked/Hermes' 2>/dev/null || true); do
+    disp="$(hd_proc_display "$pid")"
+    if [[ "$disp" == ":${HD_DISPLAY}" || "$disp" == "${HD_DISPLAY}" ]]; then
+      hd_log debug "stopping electron pid $pid on DISPLAY=$disp"
+      kill "$pid" 2>/dev/null || true
+    fi
+  done
+  sleep 0.3
+  for pid in $(pgrep -f 'linux-unpacked/Hermes' 2>/dev/null || true); do
+    disp="$(hd_proc_display "$pid")"
+    if [[ "$disp" == ":${HD_DISPLAY}" || "$disp" == "${HD_DISPLAY}" ]]; then
+      kill -9 "$pid" 2>/dev/null || true
+    fi
+  done
+}
+
+hd_electron_on_display() {
+  local pid disp
+  for pid in $(pgrep -f 'linux-unpacked/Hermes' 2>/dev/null || true); do
+    disp="$(hd_proc_display "$pid")"
+    if [[ "$disp" == ":${HD_DISPLAY}" || "$disp" == "${HD_DISPLAY}" ]]; then
+      return 0
+    fi
+  done
+  # Fallback: any Hermes binary if our launcher is alive (environ unreadable)
+  if hd_is_alive hermes-desktop && pgrep -f 'linux-unpacked/Hermes' >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# Stack components
+# ---------------------------------------------------------------------------
 hd_start_xvfb() {
   if hd_is_alive xvfb; then
-    echo "Xvfb already running (pid $(cat "$(hd_pidfile xvfb)"))"
+    hd_log info "Xvfb already up (pid $(hd_read_pid xvfb))"
     return 0
   fi
   if [[ -e "/tmp/.X${HD_DISPLAY}-lock" ]]; then
-    # orphan lock?
     if ! pgrep -af "Xvfb :${HD_DISPLAY}" >/dev/null 2>&1; then
       rm -f "/tmp/.X${HD_DISPLAY}-lock" "/tmp/.X11-unix/X${HD_DISPLAY}" 2>/dev/null || true
     else
-      echo "display :${HD_DISPLAY} already in use by another Xvfb" >&2
-      return 1
+      hd_die "display :${HD_DISPLAY} already in use"
     fi
   fi
-  hd_need Xvfb
-  local log; log="$(hd_logfile xvfb)"
-  # shellcheck disable=SC2086
-  Xvfb ":${HD_DISPLAY}" -screen 0 "$HD_GEOMETRY" -ac -nolisten tcp \
-    >"$log" 2>&1 &
-  echo $! >"$(hd_pidfile xvfb)"
-  sleep 0.4
-  if ! hd_is_alive xvfb; then
-    echo "Xvfb failed to start — see $log" >&2
-    return 1
-  fi
-  echo "Xvfb :${HD_DISPLAY} up (pid $(cat "$(hd_pidfile xvfb)"))"
+  hd_have Xvfb || hd_die "Xvfb missing"
+  hd_spawn xvfb Xvfb ":${HD_DISPLAY}" -screen 0 "$HD_GEOMETRY" -ac -nolisten tcp
+  hd_wait_until 5 "Xvfb socket" test -e "/tmp/.X11-unix/X${HD_DISPLAY}" \
+    || hd_die "Xvfb failed - see $(hd_logfile xvfb)"
+  hd_log info "Xvfb :${HD_DISPLAY} up (pid $(hd_read_pid xvfb))"
 }
 
 hd_start_dbus_wm() {
   hd_export_display
-  if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
-    if command -v dbus-launch >/dev/null 2>&1; then
-      # shellcheck disable=SC2046
-      eval "$(dbus-launch --sh-syntax)"
-      echo "$DBUS_SESSION_BUS_ADDRESS" >"$HD_STATE_DIR/run/dbus.address"
-      echo "$DBUS_SESSION_BUS_PID" >"$(hd_pidfile dbus)"
-      echo "dbus session bus pid $DBUS_SESSION_BUS_PID"
-    fi
+  if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]] && hd_have dbus-launch; then
+    # shellcheck disable=SC2046
+    eval "$(dbus-launch --sh-syntax)"
+    printf '%s\n' "$DBUS_SESSION_BUS_ADDRESS" >"$HD_STATE_DIR/run/dbus.address"
+    printf '%s\n' "$DBUS_SESSION_BUS_PID" >"$(hd_pidfile dbus)"
+    hd_log info "dbus session pid $DBUS_SESSION_BUS_PID"
+    hd_export_display
   fi
-  if hd_is_alive fluxbox; then
-    echo "fluxbox already running"
+
+  if hd_is_alive wm; then
+    hd_log info "window manager already up"
     return 0
   fi
-  hd_need fluxbox
-  local log; log="$(hd_logfile fluxbox)"
-  fluxbox >"$log" 2>&1 &
-  echo $! >"$(hd_pidfile fluxbox)"
-  sleep 0.3
-  echo "fluxbox up (pid $(cat "$(hd_pidfile fluxbox)"))"
+  local wm; wm="$(hd_resolve_wm)" || hd_die "no window manager (install fluxbox/openbox/icewm)"
+  # matchbox uses a long binary name
+  case "$wm" in
+    matchbox-window-manager) hd_spawn wm matchbox-window-manager -use_titlebar no ;;
+    *) hd_spawn wm "$wm" ;;
+  esac
+  sleep 0.25
+  hd_log info "wm $wm up (pid $(hd_read_pid wm))"
 }
 
 hd_start_hermes() {
   hd_export_display
   hd_clear_singleton
-  if pgrep -f '/apps/desktop/release/linux-unpacked/Hermes|electron .*apps/desktop' >/dev/null 2>&1; then
-    echo "Hermes Desktop process already present"
-    pgrep -af 'Hermes|electron' | head -5 || true
+  if hd_electron_on_display; then
+    hd_log info "Hermes Electron already on DISPLAY=:${HD_DISPLAY}"
     return 0
   fi
-  if ! command -v hermes >/dev/null 2>&1; then
-    echo "hermes CLI not on PATH" >&2
-    return 1
-  fi
+  hd_have hermes || hd_die "hermes CLI not on PATH"
+
   local log; log="$(hd_logfile hermes-desktop)"
-  # Optional electron flags via hermes config; we also set env for GPU off.
-  # --no-sandbox: hermes CLI often injects this when AppArmor blocks userns.
-  # Running under virtual display as the same user that owns HERMES_HOME.
   # shellcheck disable=SC2086
   nohup env DISPLAY=":$HD_DISPLAY" \
     HERMES_DESKTOP_DISABLE_GPU=1 \
@@ -182,92 +406,73 @@ hd_start_hermes() {
     $HD_HERMES_CMD \
     >"$log" 2>&1 &
   echo $! >"$(hd_pidfile hermes-desktop)"
-  echo "hermes desktop launch pid $(cat "$(hd_pidfile hermes-desktop)") - log $log"
+  hd_log info "hermes desktop launcher pid $(hd_read_pid hermes-desktop)"
 
   local i
-  for i in $(seq 1 "$HD_WAIT_HERMES_SEC"); do
-    if pgrep -f 'linux-unpacked/Hermes' >/dev/null 2>&1; then
-      echo "Hermes Electron binary is running"
+  for ((i = 1; i <= HD_WAIT_HERMES_SEC; i++)); do
+    if hd_electron_on_display; then
+      hd_log info "Hermes Electron running on :${HD_DISPLAY}"
       return 0
     fi
-    # hermes CLI may still be packaging/starting
     if ! hd_is_alive hermes-desktop && [[ "$i" -gt 5 ]]; then
-      echo "launcher exited early — tail log:" >&2
+      hd_log error "launcher exited early - tail $(hd_logfile hermes-desktop):"
       tail -n 40 "$log" >&2 || true
       return 1
     fi
     sleep 1
   done
-  echo "timeout waiting for Hermes Electron — tail log:" >&2
+  hd_log error "timeout waiting for Electron - tail $(hd_logfile hermes-desktop):"
   tail -n 60 "$log" >&2 || true
   return 1
 }
 
 hd_start_vnc() {
-  if [[ "${HD_SKIP_VNC:-0}" == "1" ]]; then
-    echo "skipping VNC (HD_SKIP_VNC=1)"
-    return 0
-  fi
+  [[ "$HD_SKIP_VNC" == "1" ]] && { hd_log info "skip VNC"; return 0; }
   if hd_is_alive x11vnc; then
-    echo "x11vnc already running"
+    hd_log info "x11vnc already up"
     return 0
   fi
-  hd_need x11vnc
+  hd_have x11vnc || hd_die "x11vnc missing"
   hd_export_display
-  local log auth_args=()
-  log="$(hd_logfile x11vnc)"
+
+  local auth_args=()
   if [[ -n "$HD_VNC_PASSWORD_FILE" && -f "$HD_VNC_PASSWORD_FILE" ]]; then
     auth_args=(-rfbauth "$HD_VNC_PASSWORD_FILE")
   else
-    # localhost-only default: no password. Refuse open bind without password file.
-    if [[ "$HD_BIND" != "127.0.0.1" && "$HD_BIND" != "localhost" ]]; then
-      echo "refusing non-localhost VNC bind without HD_VNC_PASSWORD_FILE" >&2
-      return 1
-    fi
+    hd_is_loopback_bind || hd_die "non-localhost bind requires HD_VNC_PASSWORD_FILE"
     auth_args=(-nopw)
   fi
-  x11vnc -display ":$HD_DISPLAY" \
+
+  hd_spawn x11vnc x11vnc \
+    -display ":$HD_DISPLAY" \
     -rfbport "$HD_VNC_PORT" \
     -listen "$HD_BIND" \
     -forever -shared -noxdamage -repeat \
-    "${auth_args[@]}" \
-    >"$log" 2>&1 &
-  echo $! >"$(hd_pidfile x11vnc)"
-  sleep 0.4
-  if ! hd_is_alive x11vnc; then
-    echo "x11vnc failed — see $log" >&2
-    tail -n 30 "$log" >&2 || true
-    return 1
-  fi
-  echo "x11vnc on ${HD_BIND}:${HD_VNC_PORT} (pid $(cat "$(hd_pidfile x11vnc)"))"
+    "${auth_args[@]}"
+
+  hd_wait_until 5 "x11vnc" hd_is_alive x11vnc \
+    || { tail -n 30 "$(hd_logfile x11vnc)" >&2; hd_die "x11vnc failed"; }
+  hd_log info "x11vnc ${HD_BIND}:${HD_VNC_PORT} (pid $(hd_read_pid x11vnc))"
 }
 
 hd_start_novnc() {
-  if [[ "${HD_SKIP_VNC:-0}" == "1" ]]; then
-    return 0
-  fi
+  [[ "$HD_SKIP_VNC" == "1" ]] && return 0
   if hd_is_alive novnc; then
-    echo "noVNC already running"
+    hd_log info "noVNC already up"
     return 0
   fi
-  hd_need websockify
-  [[ -d "$HD_NOVNC_WEB" ]] || {
-    echo "noVNC web root missing: $HD_NOVNC_WEB" >&2
-    return 1
-  }
-  local log; log="$(hd_logfile novnc)"
-  websockify --web="$HD_NOVNC_WEB" \
+  local wscmd web
+  wscmd="$(hd_resolve_websockify)" || hd_die "websockify missing"
+  web="$(hd_resolve_novnc_web)" || hd_die "noVNC web root missing"
+
+  # shellcheck disable=SC2086
+  hd_spawn novnc $wscmd --web="$web" \
     "${HD_BIND}:${HD_NOVNC_PORT}" \
-    "127.0.0.1:${HD_VNC_PORT}" \
-    >"$log" 2>&1 &
-  echo $! >"$(hd_pidfile novnc)"
-  sleep 0.3
-  if ! hd_is_alive novnc; then
-    echo "websockify/noVNC failed — see $log" >&2
-    tail -n 30 "$log" >&2 || true
-    return 1
-  fi
-  echo "noVNC on http://${HD_BIND}:${HD_NOVNC_PORT}/vnc.html (pid $(cat "$(hd_pidfile novnc)"))"
+    "127.0.0.1:${HD_VNC_PORT}"
+
+  hd_wait_until 5 "noVNC" hd_is_alive novnc \
+    || { tail -n 30 "$(hd_logfile novnc)" >&2; hd_die "noVNC/websockify failed"; }
+  hd_log info "noVNC http://${HD_BIND}:${HD_NOVNC_PORT}/vnc.html (pid $(hd_read_pid novnc))"
 }
 
 hd_print_urls() {
@@ -275,12 +480,16 @@ hd_print_urls() {
 Display   : :${HD_DISPLAY}
 VNC       : ${HD_BIND}:${HD_VNC_PORT}
 noVNC     : http://${HD_BIND}:${HD_NOVNC_PORT}/vnc.html?autoconnect=1&resize=remote
-SSH tunnel example:
+SSH tunnel:
   ssh -N -L ${HD_NOVNC_PORT}:127.0.0.1:${HD_NOVNC_PORT} -L ${HD_VNC_PORT}:127.0.0.1:${HD_VNC_PORT} user@host
-Then open: http://127.0.0.1:${HD_NOVNC_PORT}/vnc.html?autoconnect=1&resize=remote
+Then open:
+  http://127.0.0.1:${HD_NOVNC_PORT}/vnc.html?autoconnect=1&resize=remote
 EOF
 }
 
+# ---------------------------------------------------------------------------
+# Public commands
+# ---------------------------------------------------------------------------
 hd_start() {
   local foreground=0
   while [[ $# -gt 0 ]]; do
@@ -288,16 +497,17 @@ hd_start() {
       --foreground) foreground=1; shift ;;
       --no-vnc) HD_SKIP_VNC=1; shift ;;
       --bind) HD_BIND="$2"; shift 2 ;;
-      *) echo "unknown start flag: $1" >&2; return 1 ;;
+      --display) HD_DISPLAY="$2"; shift 2 ;;
+      *) hd_die "unknown start flag: $1" ;;
     esac
   done
 
   hd_mkdirs
-  hd_doctor >/dev/null || {
-    echo "doctor failed — install missing deps (see: hermes-desktop-headless doctor)" >&2
-    hd_doctor || true
+  if ! hd_doctor >/dev/null; then
+    hd_log error "doctor failed - missing dependencies"
+    hd_doctor --install-hints || true
     return 1
-  }
+  fi
 
   hd_start_xvfb
   hd_start_dbus_wm
@@ -308,7 +518,7 @@ hd_start() {
   date -u +"%Y-%m-%dT%H:%M:%SZ started" >>"$HD_STATE_DIR/logs/lifecycle.log"
 
   if [[ "$foreground" -eq 1 ]]; then
-    echo "foreground mode — Ctrl-C stops the stack"
+    hd_log info "foreground mode - Ctrl-C stops the stack"
     trap 'hd_stop' INT TERM
     while hd_is_alive xvfb; do sleep 2; done
   fi
@@ -316,54 +526,63 @@ hd_start() {
 
 hd_stop() {
   hd_mkdirs
-  # order: app → vnc → wm → xvfb
   hd_kill_pidfile hermes-desktop
-  # also kill Electron if hermes launcher already exited
-  pkill -f 'linux-unpacked/Hermes' 2>/dev/null || true
+  hd_kill_electron_on_display
   hd_kill_pidfile novnc
   hd_kill_pidfile x11vnc
+  hd_kill_pidfile wm
+  # legacy name from v0.1
   hd_kill_pidfile fluxbox
-  if [[ -f "$(hd_pidfile dbus)" ]]; then
-    hd_kill_pidfile dbus
-  fi
+  hd_kill_pidfile dbus
   hd_kill_pidfile xvfb
-  # orphan Xvfb on our display
   pkill -f "Xvfb :${HD_DISPLAY}" 2>/dev/null || true
   rm -f "/tmp/.X${HD_DISPLAY}-lock" 2>/dev/null || true
   hd_clear_singleton || true
   date -u +"%Y-%m-%dT%H:%M:%SZ stopped" >>"$HD_STATE_DIR/logs/lifecycle.log"
+  hd_log info "stopped"
   echo "stopped"
 }
 
 hd_status() {
   hd_mkdirs
-  for n in xvfb dbus fluxbox hermes-desktop x11vnc novnc; do
+  local n
+  for n in xvfb dbus wm hermes-desktop x11vnc novnc; do
     if hd_is_alive "$n"; then
-      echo "UP   $n pid=$(cat "$(hd_pidfile "$n")")"
+      echo "UP   $n pid=$(hd_read_pid "$n")"
     else
-      echo "DOWN $n"
+      # compat: old fluxbox pidfile
+      if [[ "$n" == wm ]] && hd_is_alive fluxbox; then
+        echo "UP   wm(fluxbox) pid=$(hd_read_pid fluxbox)"
+      else
+        echo "DOWN $n"
+      fi
     fi
   done
-  if pgrep -f 'linux-unpacked/Hermes' >/dev/null 2>&1; then
-    echo "UP   electron (pgrep)"
-    pgrep -af 'linux-unpacked/Hermes' | head -3
+  if hd_electron_on_display; then
+    echo "UP   electron DISPLAY=:${HD_DISPLAY}"
+    pgrep -af 'linux-unpacked/Hermes' | head -3 || true
   else
-    echo "DOWN electron (pgrep)"
+    echo "DOWN electron"
   fi
-  [[ -e "/tmp/.X11-unix/X${HD_DISPLAY}" ]] && echo "X socket :$HD_DISPLAY present" || echo "X socket :$HD_DISPLAY missing"
+  if [[ -e "/tmp/.X11-unix/X${HD_DISPLAY}" ]]; then
+    echo "X socket :$HD_DISPLAY present"
+  else
+    echo "X socket :$HD_DISPLAY missing"
+  fi
   hd_print_urls
 }
 
 hd_screenshot() {
+  hd_load_runtime_env
   hd_export_display
-  hd_need scrot
-  local out="${1:-$HD_STATE_DIR/logs/screenshot-$(date -u +%Y%m%dT%H%M%SZ).png}"
+  local tool out
+  tool="$(hd_resolve_screenshot)" || hd_die "need scrot or ImageMagick import"
+  out="${1:-$HD_STATE_DIR/logs/screenshot-$(date -u +%Y%m%dT%H%M%SZ).png}"
   mkdir -p "$(dirname "$out")"
-  # scrot needs the display live
-  scrot -o "$out"
+  case "$tool" in
+    scrot) scrot -o "$out" ;;
+    import) import -window root "$out" ;;
+    gnome-screenshot) gnome-screenshot -f "$out" ;;
+  esac
   echo "$out"
-  # also copy into project docs if running from a checkout with docs/screenshots
-  if [[ -d "${ROOT:-}/docs/screenshots" ]]; then
-    cp -f "$out" "$ROOT/docs/screenshots/$(basename "$out")" 2>/dev/null || true
-  fi
 }
