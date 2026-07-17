@@ -3,88 +3,67 @@
 Hermes Desktop can show **multiple chats at once** — tabs and/or a grid of
 panes — the same feature demos on X/Twitter.
 
-This document covers **using that UI over noVNC** (headless servers), where
-native drag-and-drop often fails.
+## Why drag felt broken
 
-## Why drag breaks in noVNC
+Session drag is a **pointer drag** (not HTML5 DnD). Two product issues made it
+feel dead:
 
-Session splits in Hermes use a **pointer drag session** (not HTML5 DnD). Over
-noVNC, three things commonly break it:
+1. **Dropping on the chat body used to mean “insert `@session` chip”** (link),
+   not “open a second pane”. Unless you hit a thin **edge band** or the **tab
+   strip**, nothing visible happened (or an @chip appeared). That is what most
+   people did after watching the video.
+2. **noVNC** made edge targeting worse (scaled coords, laggy frames).
 
-1. **Scaled display** (`resize=scale`) — mouse coordinates no longer match
-   drop targets.
-2. **High VNC defer/wait** — frame updates lag the pointer, so edge hit-tests
-   miss.
-3. **Missing zero-motion injects** — menu clicks / slow drags send `dx=dy=0`
-   events that some VNC paths drop.
+## Fixes (Hermes Desktop source + this headless helper)
 
-## What this project does about it
+### A. Desktop behavior (hermes-agent, rebuild Desktop)
 
-### 1. Pointer-fidelity x11vnc (default since v0.3)
+| Drop target | Result (after fix) |
+|-------------|--------------------|
+| Chat **body** | Open session as **right split** (video default) |
+| Chat **edge** | Split on that edge |
+| **Tab strip** | Stack as a tab |
+| **Composer** only | `@session` link chip |
 
-```
--always_inject
--pointer_mode 1
--cursor most
--defer 1
--wait 5
--wait_ui 0.5
-```
+Also: every session row menu has **Open in split → Right/Left/Up/Down**
+(same as New session), not only “Open in new tab”.
 
-Re-apply without restarting Desktop:
+### B. Headless / noVNC (this repo, v0.3+)
+
+- Pointer-fidelity x11vnc (`-always_inject`, low defer/wait, `pointer_mode 1`)
+- noVNC URL must use **`resize=remote`** (1:1 mouse coords)
+- CLI when drag still fails: `hermes-desktop-headless split right`
 
 ```bash
 hermes-desktop-headless restart-vnc
-```
-
-### 2. Drag-friendly noVNC URL
-
-Always open:
-
-```
+# open:
 http://127.0.0.1:6080/vnc.html?autoconnect=1&resize=remote&quality=9&compression=0&show_dot=1
 ```
 
-| Param | Why |
-|-------|-----|
-| `resize=remote` | 1:1 coordinates (required for edge drops) |
-| `quality=9` + `compression=0` | Less smear during drag |
-| `show_dot=1` | Local cursor for hit-testing |
+## Laptop (native Desktop, no headless repo)
 
-`hermes-desktop-headless url` prints this string.
+After rebuilding/updating Hermes Desktop with the source fix above:
 
-### 3. No-drag CLI (works even if VNC drag is hopeless)
+1. **Right-click any session** (not the active one) → **Open in split → Right**
+2. Or **drag** that session onto the chat area (body or edge)
+3. **Right-click New session → Open in split → Right** for a fresh chat beside
+4. **Ctrl+T** / **Ctrl+click** session → tab (not split)
 
-```bash
-# Side-by-side chat (video look) — needs xdotool
-sudo apt-get install -y xdotool   # once
-hermes-desktop-headless split right
-hermes-desktop-headless split down
-
-# Stacked tab only
-hermes-desktop-headless new-tab   # Ctrl+T
-```
-
-### 4. In-app gestures (Hermes itself)
-
-| Goal | Action |
-|------|--------|
-| New tab | **Ctrl+T** |
-| Open session as tab | **Ctrl+click** session row, or right-click → **Open in new tab** |
-| New chat in split | Right-click **New session** → **Open in split** → Right/Left/Up/Down |
-| Drag split | Drag session from list to **edge** of chat (needs drag-friendly URL) |
+You cannot tile the *currently selected* session onto itself (by design: one
+runtime). Switch to another session first, then split the previous one.
 
 ## Verify
 
 ```bash
+# headless host
 hermes-desktop-headless status
-hermes-desktop-headless url
-# after restart-vnc, x11vnc log should mention pointer-fidelity
 hermes-desktop-headless split right
-hermes-desktop-headless screenshot /tmp/after-split.png
+
+# or in UI
+# right-click session → Open in split → Right
 ```
 
 ## See also
 
-- [README.md](../README.md) — install / security
-- Hermes upstream multisession: session tiles + pane-shell drag session
+- [README.md](../README.md)
+- Upstream: `apps/desktop/src/app/chat/session-drag.ts`, `session-actions-menu.tsx`
