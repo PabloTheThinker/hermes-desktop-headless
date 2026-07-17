@@ -4,7 +4,14 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-PATCH_DIR="$ROOT/patches"
+# Durable store (survives hermes-agent git reset) preferred when present.
+if [[ -n "${HERMES_LOCAL_PATCHES:-}" && -d "${HERMES_LOCAL_PATCHES}" ]]; then
+  PATCH_DIR="$HERMES_LOCAL_PATCHES"
+elif [[ -d "${HOME}/.hermes/local-patches" ]] && ls "${HOME}/.hermes/local-patches"/0001-*.patch >/dev/null 2>&1; then
+  PATCH_DIR="${HOME}/.hermes/local-patches"
+else
+  PATCH_DIR="$ROOT/patches"
+fi
 FORCE_BUILD=0
 DRY=0
 HERMES_ROOT="${HERMES_ROOT:-}"

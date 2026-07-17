@@ -4,7 +4,7 @@
 
 Virtual framebuffer + lightweight WM + VNC + browser client. Defaults to **localhost-only** access via SSH tunnel.
 
-[![version](https://img.shields.io/badge/version-0.3.2-blue)](VERSION)
+[![version](https://img.shields.io/badge/version-0.4.0-blue)](VERSION)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![ci](https://github.com/PabloTheThinker/hermes-desktop-headless/actions/workflows/ci.yml/badge.svg)](https://github.com/PabloTheThinker/hermes-desktop-headless/actions/workflows/ci.yml)
 
@@ -19,7 +19,9 @@ Virtual framebuffer + lightweight WM + VNC + browser client. Defaults to **local
 | Only using Telegram / CLI / dashboard | **No** | You don’t need this |
 | Want video-style multi-chat tiling | **Yes (patches)** | Upstream still drops on chat body as `@session` link; our Desktop patches fix that |
 
-**Honest take:** The headless stack is a real product for agent servers. The Desktop patches are the piece most **interactive** users feel daily — until Nous merges equivalent UX, re-apply after `hermes update` resets.
+**Honest take:** The headless stack is a real product for agent servers. The Desktop patches are the piece most **interactive** users feel daily. Until [upstream PR #66120](https://github.com/NousResearch/hermes-agent/pull/66120) merges, **always update with `hermes-update`** (not bare `hermes update`) so patches re-apply after git reset.
+
+See **[docs/UPDATE-SURVIVAL.md](docs/UPDATE-SURVIVAL.md)**.
 
 ## Features
 
@@ -55,6 +57,16 @@ cd hermes-desktop-headless
 hermes-desktop-headless doctor --install-hints
 hermes-desktop-headless start
 ```
+
+## Survive future updates
+
+```bash
+./scripts/install.sh          # once per machine
+hermes-update                 # instead of: hermes update
+```
+
+That re-applies patches from `~/.hermes/local-patches` and force-builds Desktop.
+Details: [docs/UPDATE-SURVIVAL.md](docs/UPDATE-SURVIVAL.md) · Upstream: [PR #66120](https://github.com/NousResearch/hermes-agent/pull/66120)
 
 ## Laptop users (no headless stack)
 

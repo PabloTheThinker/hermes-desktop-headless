@@ -9,6 +9,7 @@ help:
 
 check:
 	bash -n $(ROOT)bin/hermes-desktop-headless
+	bash -n $(ROOT)bin/hermes-update
 	bash -n $(ROOT)lib/common.sh
 	bash -n $(ROOT)scripts/install.sh
 	bash -n $(ROOT)scripts/smoke-test.sh
