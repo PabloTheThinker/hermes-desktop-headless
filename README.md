@@ -4,7 +4,7 @@
 
 Virtual framebuffer + lightweight WM + VNC + browser client. Defaults to **localhost-only** access via SSH tunnel.
 
-[![version](https://img.shields.io/badge/version-0.3.0-blue)](VERSION)
+[![version](https://img.shields.io/badge/version-0.3.1-blue)](VERSION)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![ci](https://github.com/PabloTheThinker/hermes-desktop-headless/actions/workflows/ci.yml/badge.svg)](https://github.com/PabloTheThinker/hermes-desktop-headless/actions/workflows/ci.yml)
 

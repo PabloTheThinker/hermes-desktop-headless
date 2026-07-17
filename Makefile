@@ -13,7 +13,9 @@ check:
 	bash -n $(ROOT)scripts/install.sh
 	bash -n $(ROOT)scripts/smoke-test.sh
 	@if command -v shellcheck >/dev/null 2>&1; then \
-	  shellcheck -x $(ROOT)bin/hermes-desktop-headless $(ROOT)lib/common.sh \
+	  shellcheck -x \
+	    -e SC1091 \
+	    $(ROOT)bin/hermes-desktop-headless $(ROOT)lib/common.sh \
 	    $(ROOT)scripts/install.sh $(ROOT)scripts/smoke-test.sh; \
 	else \
 	  echo "shellcheck not installed (optional)"; \

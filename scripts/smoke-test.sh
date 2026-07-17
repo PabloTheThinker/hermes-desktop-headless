@@ -9,8 +9,8 @@ fail=0
 pass() { printf 'PASS %s\n' "$*"; }
 bad()  { printf 'FAIL %s\n' "$*"; fail=1; }
 
-[[ -f "$ROOT/VERSION" ]] && pass "VERSION exists" || bad "VERSION missing"
-[[ -x "$ROOT/bin/hermes-desktop-headless" ]] && pass "cli executable" || bad "cli not executable"
+if [[ -f "$ROOT/VERSION" ]]; then pass "VERSION exists"; else bad "VERSION missing"; fi
+if [[ -x "$ROOT/bin/hermes-desktop-headless" ]]; then pass "cli executable"; else bad "cli not executable"; fi
 
 if hd_resolve_novnc_web >/dev/null 2>&1; then
   pass "novnc web: $(hd_resolve_novnc_web)"
@@ -30,16 +30,15 @@ else
   bad "no window manager (fluxbox|openbox|icewm)"
 fi
 
-HD_BIND=127.0.0.1
-hd_is_loopback_bind && pass "loopback 127.0.0.1" || bad "loopback detect"
-HD_BIND=0.0.0.0
-hd_is_loopback_bind && bad "0.0.0.0 should not be loopback" || pass "non-loopback 0.0.0.0"
+# loopback guard — export so shellcheck sees use via hd_is_loopback_bind
+export HD_BIND=127.0.0.1
+if hd_is_loopback_bind; then pass "loopback 127.0.0.1"; else bad "loopback detect"; fi
+export HD_BIND=0.0.0.0
+if hd_is_loopback_bind; then bad "0.0.0.0 should not be loopback"; else pass "non-loopback 0.0.0.0"; fi
 
-# package hints always available
 hints="$(hd_package_hints)"
-[[ -n "$hints" ]] && pass "package hints" || bad "empty package hints"
+if [[ -n "$hints" ]]; then pass "package hints"; else bad "empty package hints"; fi
 
-# doctor: full clean only when hermes present; CI can run without hermes
 if hd_have hermes; then
   if hd_doctor >/dev/null 2>&1; then
     pass "doctor clean"

@@ -58,8 +58,11 @@ hd_is_alive() {
 }
 
 hd_read_pid() {
-  local pf; pf="$(hd_pidfile "$1")"
-  [[ -f "$pf" ]] && cat "$pf" || true
+  local pf
+  pf="$(hd_pidfile "$1")"
+  if [[ -f "$pf" ]]; then
+    cat "$pf"
+  fi
 }
 
 hd_spawn() {
@@ -309,7 +312,9 @@ hd_clear_singleton() {
 # Kill only Hermes Electron processes bound to our DISPLAY (not every Hermes on the host).
 hd_proc_display() {
   # best-effort; other users' /proc/*/environ may be unreadable
-  local pid="$1" envf="/proc/$pid/environ"
+  local pid envf
+  pid="$1"
+  envf="/proc/${pid}/environ"
   [[ -r "$envf" ]] || return 0
   tr '\0' '\n' <"$envf" 2>/dev/null | sed -n 's/^DISPLAY=//p' | head -1 || true
 }
