@@ -9,15 +9,18 @@ HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 PATCH_DIR="${HERMES_LOCAL_PATCHES:-$HERMES_HOME/local-patches}"
 APPLY="${HERMES_APPLY_PATCHES:-}"
 
-# Prefer installed apply script from this product, then next to this wrapper.
+# Resolve apply script without machine-specific absolute paths.
+_self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -z "$APPLY" ]]; then
   for c in \
     "$HOME/.local/share/hermes-desktop-headless/scripts/apply-desktop-patches.sh" \
-    "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)/scripts/apply-desktop-patches.sh" \
-    "$HOME/projects/hermes-desktop-headless/scripts/apply-desktop-patches.sh" \
-    "/home/ilo/projects/hermes-desktop-headless/scripts/apply-desktop-patches.sh"
+    "$_self_dir/../scripts/apply-desktop-patches.sh" \
+    "$_self_dir/../share/hermes-desktop-headless/scripts/apply-desktop-patches.sh"
   do
-    if [[ -x "$c" ]]; then APPLY="$c"; break; fi
+    if [[ -x "$c" ]]; then
+      APPLY="$(cd "$(dirname "$c")" && pwd)/$(basename "$c")"
+      break
+    fi
   done
 fi
 
@@ -40,18 +43,18 @@ upd=$?
 set -e
 
 if [[ $upd -ne 0 ]]; then
-  echo "⚠ hermes update exited $upd — still attempting patch re-apply" >&2
+  echo "warning: hermes update exited $upd — still attempting patch re-apply" >&2
 fi
 
 if [[ ! -x "${APPLY:-}" ]]; then
-  echo "✗ apply-desktop-patches.sh not found. Install hermes-desktop-headless:" >&2
+  echo "error: apply-desktop-patches.sh not found. Install hermes-desktop-headless:" >&2
   echo "  git clone https://github.com/PabloTheThinker/hermes-desktop-headless.git" >&2
   echo "  cd hermes-desktop-headless && ./scripts/install.sh" >&2
   exit "${upd:-1}"
 fi
 
 # Sync patches from product tree into durable HERMES_HOME location if present
-PRODUCT_PATCHES="$(dirname "$APPLY")/../patches"
+PRODUCT_PATCHES="$(cd "$(dirname "$APPLY")/.." && pwd)/patches"
 if [[ -d "$PRODUCT_PATCHES" ]]; then
   mkdir -p "$PATCH_DIR"
   cp -f "$PRODUCT_PATCHES"/0001-*.patch \
@@ -62,14 +65,12 @@ fi
 
 export HERMES_LOCAL_PATCHES="$PATCH_DIR"
 echo "==> re-apply local patches from $PATCH_DIR"
-# Force Desktop rebuild when UI patches apply (sources changed under reset)
 if ! "$APPLY" --force-build; then
-  echo "⚠ patch re-apply had failures — see output above" >&2
-  # still exit update status if update failed harder
+  echo "warning: patch re-apply had failures — see output above" >&2
   [[ $upd -ne 0 ]] && exit "$upd"
   exit 1
 fi
 
-echo "✓ update + local patches complete"
+echo "ok: update + local patches complete"
 echo "  fully quit Hermes Desktop once, then reopen (or: hermes desktop --skip-build)"
 exit "$upd"

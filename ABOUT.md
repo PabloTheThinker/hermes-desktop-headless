@@ -39,4 +39,5 @@ Same family of stack used for headless Chrome/CI desktops and “desktop in a ta
 
 ## Maintainers
 
-Pablo Navarro / Vektra — GitHub issues and PRs welcome.
+Maintained under [PabloTheThinker/hermes-desktop-headless](https://github.com/PabloTheThinker/hermes-desktop-headless).
+Issues and PRs welcome. See [SECURITY.md](SECURITY.md) before filing vulnerability details.
